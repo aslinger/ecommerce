@@ -1,0 +1,57 @@
+version: 0.2
+
+# Placeholder for AWS Account ID (to be set as an environment variable in CodePipeline)
+# Set AWS_ACCOUNT_ID=XXXXXXXXXXXX in your CodeBuild project configuration
+env:
+  variables:
+    AWS_REGION: \"us-west-2\"
+    JAVA_REPO_URI: \"TODO_REPLACE_WITH_ECR_URI/java-inventory-service\" # ECR URI placeholder
+    PYTHON_REPO_URI: \"TODO_REPLACE_WITH_ECR_URI/pricing-service\" # ECR URI placeholder
+    IMAGE_TAG: \"latest\"
+
+phases:
+  pre_build:
+    commands:
+      - echo Logging in to Amazon ECR...
+      # Standard ECR login command
+      - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+      
+  build:
+    commands:
+      - echo Build started on `date`
+      
+      # --- Build Java Inventory Service ---
+      - echo Building the Java Inventory Service Docker image...
+      - docker build -t $JAVA_REPO_URI:$IMAGE_TAG -f java-inventory-service/Dockerfile java-inventory-service/.
+      - docker tag $JAVA_REPO_URI:$IMAGE_TAG $JAVA_REPO_URI:$CODEBUILD_RESOLVED_SOURCE_VERSION
+
+      # --- Build Python Pricing Service ---
+      - echo Building the Python Pricing Service Docker image...
+      - docker build -t $PYTHON_REPO_URI:$IMAGE_TAG -f pricing-service/Dockerfile pricing-service/.
+      - docker tag $PYTHON_REPO_URI:$IMAGE_TAG $PYTHON_REPO_URI:$CODEBUILD_RESOLVED_SOURCE_VERSION
+      
+  post_build:
+    commands:
+      - echo Build completed successfully on `date`
+      
+      # --- Push Java Images ---
+      - echo Pushing the Java Inventory Service Docker image...
+      - docker push $JAVA_REPO_URI:$IMAGE_TAG
+      - docker push $JAVA_REPO_URI:$CODEBUILD_RESOLVED_SOURCE_VERSION
+
+      # --- Push Python Images ---
+      - echo Pushing the Python Pricing Service Docker image...
+      - docker push $PYTHON_REPO_URI:$IMAGE_TAG
+      - docker push $PYTHON_REPO_URI:$CODEBUILD_RESOLVED_SOURCE_VERSION
+      
+      - echo Writing image definitions and K8s manifests for deployment artifact.
+      # Create a placeholder file used by CodePipeline's EKS deployment action (Day 5)
+      - printf '[{\"name\":\"java-inventory-service\",\"imageUri\":\"%s\"}, {\"name\":\"pricing-service\",\"imageUri\":\"%s\"}]' $JAVA_REPO_URI:$IMAGE_TAG $PYTHON_REPO_URI:$IMAGE_TAG > imagedefinitions.json
+      
+artifacts:
+  files:
+    # These files are passed to the deployment stage of the pipeline on Day 5
+    - 'k8s/configmap.yaml'
+    - 'k8s/java-inventory-deployment.yaml'
+    - 'k8s/pricing-deployment.yaml'
+    - 'imagedefinitions.json'

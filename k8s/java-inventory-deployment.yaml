@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inventory-service
+  labels:
+    app: inventory
+spec:
+  replicas: 2 # Standard practice for high availability
+  selector:
+    matchLabels:
+      app: inventory
+  template:
+    metadata:
+      labels:
+        app: inventory
+    spec:
+      containers:
+      - name: inventory-app
+        # This image URL will be dynamically updated by the CI/CD pipeline (Day 5)
+        image: TODO_REPLACE_WITH_ECR_URI/java-inventory-service:latest
+        ports:
+        - containerPort: 8080
+        env:
+        - name: SQS_QUEUE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: SQS_QUEUE_URL
+        # Resource requests and limits are set for Fargate cost predictability and optimization.
+        resources:
+          requests:
+            memory: \"256Mi\"
+            cpu: \"250m\"
+          limits:
+            memory: \"512Mi\"
+            cpu: \"500m\"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: inventory-service-elb
+  labels:
+    app: inventory
+spec:
+  selector:
+    app: inventory
+  type: LoadBalancer # Exposes the API externally via an AWS Load Balancer
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 8080

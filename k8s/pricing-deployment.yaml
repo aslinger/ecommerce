@@ -1,0 +1,43 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: pricing-service-sa
+  namespace: default
+  # IRSA Annotation: This links the K8s SA to the AWS IAM Role for SQS access.
+  # The role ARN comes from the 'pricing_sa_role_arn' Terraform output.
+  annotations:
+    eks.amazonaws.com/role-arn: \"TODO_REPLACE_WITH_PRICING_SA_IAM_ROLE_ARN\"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pricing-service
+  labels:
+    app: pricing
+spec:
+  replicas: 1 
+  selector:
+    matchLabels:
+      app: pricing
+  template:
+    metadata:
+      labels:
+        app: pricing
+    spec:
+      # Use the Service Account defined above for IRSA
+      serviceAccountName: pricing-service-sa
+      containers:
+      - name: pricing-consumer
+        # This image URL will be dynamically updated by the CI/CD pipeline (Day 5)
+        image: TODO_REPLACE_WITH_ECR_URI/pricing-service:latest
+        envFrom: # Pulls SQS_QUEUE_URL and AWS_REGION from the ConfigMap
+        - configMapRef:
+            name: app-config
+        # Resource requests and limits are set for Fargate cost predictability and optimization.
+        resources:
+          requests:
+            memory: \"128Mi\"
+            cpu: \"100m\"
+          limits:
+            memory: \"256Mi\"
+            cpu: \"200m\"
