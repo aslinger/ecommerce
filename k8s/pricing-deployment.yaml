@@ -6,7 +6,7 @@ metadata:
   # IRSA Annotation: This links the K8s SA to the AWS IAM Role for SQS access.
   # The role ARN comes from the 'pricing_sa_role_arn' Terraform output.
   annotations:
-    eks.amazonaws.com/role-arn: \"TODO_REPLACE_WITH_PRICING_SA_IAM_ROLE_ARN\"
+    eks.amazonaws.com/role-arn: "arn:aws:iam::497588665354:role/EKS-PricingService-SQSConsumer"
 ---
 apiVersion: apps/v1
 kind: Deployment

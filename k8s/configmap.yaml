@@ -4,9 +4,6 @@ metadata:
   name: app-config
   namespace: default
 data:
-  # The value for this key needs to be injected into the services as an environment variable
-  # In a real CI/CD environment (Day 5), CodePipeline or CodeBuild would replace this placeholder 
-  # with the actual SQS URL from the Terraform output.
-  SQS_QUEUE_URL: \"TODO_REPLACE_WITH_ACTUAL_SQS_QUEUE_URL\" 
-  # Set the region for the Python consumer's Boto3 client
-  AWS_REGION: \"us-west-2\" 
+  SQS_QUEUE_URL: "https://sqs.us-west-2.amazonaws.com/497588665354/inventory-update-queue"
+  DYNAMODB_TABLE_NAME: "PriceHistory"
+  AWS_REGION: "us-west-2"

@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pricing-service-canary
+  labels:
+    app: pricing-canary
+    canary: "true"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pricing-canary
+  template:
+    metadata:
+      labels:
+        app: pricing-canary
+        canary: "true"
+    spec:
+      serviceAccountName: pricing-service-sa
+      containers:
+        - name: pricing-consumer-canary
+          # This image name matches the key in imagedefinitions.json
+          image: TODO_REPLACE_WITH_ECR_URI/pricing-service:latest
+          envFrom:
+            - configMapRef:
+                name: app-config
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "200m"

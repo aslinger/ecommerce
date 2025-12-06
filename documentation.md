@@ -10,14 +10,14 @@ The core objective was to demonstrate senior-level proficiency in polyglot appli
 
 ## 💻 Technology Stack & Architecture
 
-| Category | Technology | Purpose |
-| :--- | :--- | :--- |
-| **Cloud Infrastructure** | AWS | Core cloud provider. |
-| **IaC** | Terraform (v5.x) | Provisioning of all AWS resources (VPC, EKS, SQS, ECR, CodePipeline, IAM, CloudWatch). |
-| **Container Orchestration** | AWS EKS Fargate | Serverless Kubernetes compute plane, ensuring zero management overhead for underlying nodes. |
-| **Microservices (Polyglot)** | Java (Spring Boot) | **Producer:** Inventory API service, responsible for receiving updates and publishing messages. |
-| **Microservices (Polyglot)** | Python (Boto3) | **Consumer:** Dynamic Pricing Service, responsible for consuming SQS messages and simulating pricing logic. |
-| **Messaging** | AWS SQS | Decouples the Inventory Producer from the Pricing Consumer, enabling asynchronous, event-driven communication. |
+| Category                     | Technology         | Purpose                                                                                                        |
+|:-----------------------------|:-------------------|:---------------------------------------------------------------------------------------------------------------|
+| **Cloud Infrastructure**     | AWS                | Core cloud provider.                                                                                           |
+| **IaC**                      | Terraform (v5.x)   | Provisioning of all AWS resources (VPC, EKS, SQS, ECR, CodePipeline, IAM, CloudWatch).                         |
+| **Container Orchestration**  | AWS EKS Fargate    | Serverless Kubernetes compute plane, ensuring zero management overhead for underlying nodes.                   |
+| **Microservices (Polyglot)** | Java (Spring Boot) | **Producer:** Inventory API service, responsible for receiving updates and publishing messages.                |
+| **Microservices (Polyglot)** | Python (Boto3)     | **Consumer:** Dynamic Pricing Service, responsible for consuming SQS messages and simulating pricing logic.    |
+| **Messaging**                | AWS SQS            | Decouples the Inventory Producer from the Pricing Consumer, enabling asynchronous, event-driven communication. |
 
 ### Architecture Flow
 
@@ -50,7 +50,7 @@ The entire solution leverages a fully automated CI/CD pipeline orchestrated by T
 
 ### 1. Cost Optimization (Fargate Spot)
 
-To demonstrate efficient resource management and reduce total cost of ownership (TCO), the EKS Fargate Profile was configured to utilize the **FARGATE_SPOT** capacity provider.
+To demonstrate efficient resource management and reduce the total cost of ownership (TCO), the EKS Fargate Profile was configured to utilize the **FARGATE_SPOT** capacity provider.
 
 * **Impact:** Achieves up to **70% cost savings** on compute resources for the Python Pricing Service (which is an interruptible, asynchronous workload), drastically improving the solution’s budget efficiency.
 
