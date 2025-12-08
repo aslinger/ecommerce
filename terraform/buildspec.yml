@@ -3,8 +3,8 @@ version: 0.2
 env:
   variables:
     AWS_REGION: "us-west-2"
-    JAVA_REPO_URI: "TODO_REPLACE_WITH_ECR_URI/java-inventory-service"
-    PYTHON_REPO_URI: "TODO_REPLACE_WITH_ECR_URI/pricing-service"
+    JAVA_REPO_URI: "497588665354.dkr.ecr.us-east-1.amazonaws.com/ecomm/java-inventory-service"
+    PYTHON_REPO_URI: "497588665354.dkr.ecr.us-east-1.amazonaws.com/ecomm/pricing-service"
     IMAGE_TAG: "latest"
     TRIVY_VERSION: "0.51.0"
 

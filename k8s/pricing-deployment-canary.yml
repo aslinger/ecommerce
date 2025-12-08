@@ -20,7 +20,7 @@ spec:
       containers:
         - name: pricing-consumer-canary
           # This image name matches the key in imagedefinitions.json
-          image: TODO_REPLACE_WITH_ECR_URI/pricing-service:latest
+          image: 497588665354.dkr.ecr.us-east-1.amazonaws.com/ecomm/pricing-service:latest
           envFrom:
             - configMapRef:
                 name: app-config

@@ -29,7 +29,7 @@ spec:
       containers:
       - name: pricing-consumer
         # This image URL will be dynamically updated by the CI/CD pipeline (Day 5)
-        image: TODO_REPLACE_WITH_ECR_URI/pricing-service:latest
+        image: 497588665354.dkr.ecr.us-east-1.amazonaws.com/ecomm/pricing-service:latest
         envFrom: # Pulls SQS_QUEUE_URL and AWS_REGION from the ConfigMap
         - configMapRef:
             name: app-config

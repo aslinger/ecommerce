@@ -17,7 +17,7 @@ spec:
       containers:
       - name: inventory-app
         # This image URL will be dynamically updated by the CI/CD pipeline (Day 5)
-        image: TODO_REPLACE_WITH_ECR_URI/java-inventory-service:latest
+        image: 497588665354.dkr.ecr.us-east-1.amazonaws.com/ecomm/java-inventory-service:latest
         ports:
         - containerPort: 8080
         env:
@@ -29,11 +29,11 @@ spec:
         # Resource requests and limits are set for Fargate cost predictability and optimization.
         resources:
           requests:
-            memory: \"256Mi\"
-            cpu: \"250m\"
+            memory: "256Mi"
+            cpu: "250m"
           limits:
-            memory: \"512Mi\"
-            cpu: \"500m\"
+            memory: "512Mi"
+            cpu: "500m"
 ---
 apiVersion: v1
 kind: Service
