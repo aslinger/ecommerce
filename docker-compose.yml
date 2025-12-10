@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  # 1. LocalStack (Existing)
+  localstack:
+    container_name: localstack_main
+    image: localstack/localstack:3.0
+    ports:
+      - "4566:4566"
+    environment:
+      - SERVICES=sqs,dynamodb
+      - AWS_DEFAULT_REGION=us-east-1
+      - DEBUG=1
+      - PERSISTENCE=0
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock"
+      - "./infra/localstack-init.sh:/etc/localstack/init/ready.d/init.sh"
+
+  # 2. Jaeger (NEW - The Observability Backend)
+  jaeger:
+    container_name: jaeger
+    image: jaegertracing/all-in-one:latest
+    ports:
+      - "16686:16686" # The UI Port
+      - "4317:4317"   # OTLP gRPC Receiver (For Java/Python agents)
+      - "4318:4318"   # OTLP HTTP Receiver
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true

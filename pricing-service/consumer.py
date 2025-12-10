@@ -1,120 +1,107 @@
-import os
-import time
-import json
-import logging
 import boto3
-from botocore.exceptions import ClientError
+import json
+import time
+import sys
+import logging
 
-# --- Configuration ---
-# The SQS_QUEUE_URL will be injected via a Kubernetes ConfigMap/Environment Variable on Day 4.
-SQS_QUEUE_URL = os.environ.get("SQS_QUEUE_URL")
-REGION_NAME = os.environ.get("AWS_REGION", "us-west-2") # Matches the region defined in main.tf
+# --- OPENTELEMETRY IMPORTS ---
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.propagate import extract
+from opentelemetry.context import attach, detach
 
-# Logging setup
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# --- CONFIGURATION ---
+REGION = 'us-east-1'
+ENDPOINT = 'http://localhost:4566'
+QUEUE_URL = 'http://localhost:4566/000000000000/order-events'
+TABLE_NAME = 'Orders'
 
-def get_sqs_client():
-    """Initializes the SQS client. Relies on IRSA for credential lookup."""
-    # Since the service account (IRSA) has SQS permissions, boto3 automatically handles authentication.
-    return boto3.client('sqs', region_name=REGION_NAME)
+# --- 1. SETUP OBSERVABILITY ---
+# Define the Resource (Service Name)
+resource = Resource(attributes={
+    "service.name": "inventory-worker-python"
+})
 
-def process_message(message_body):
-    """
-    Simulates the dynamic pricing logic based on the inventory update.
-    """
-    logging.info(f"Received message for processing.")
-    
-    try:
-        data = json.loads(message_body)
-        sku = data.get("sku")
-        stock = data.get("stock")
-        
-        # --- Dynamic Pricing Logic Simulation ---
-        if stock is None:
-            logging.warning(f"Message for SKU {sku} missing stock level.")
-            return
+# Configure the Exporter (Send data to Jaeger on Port 4318)
+trace.set_tracer_provider(TracerProvider(resource=resource))
+tracer = trace.get_tracer(__name__)
+otlp_exporter = OTLPSpanExporter(endpoint="http://localhost:4318/v1/traces")
+trace.get_tracer_provider().add_span_processor(BatchSpanProcessor(otlp_exporter))
 
-        if stock < 10:
-            price_change = "INCREASED by 15% (Critical Low Stock)"
-        elif stock > 50:
-            price_change = "DECREASED by 5% (High Stock/Overstock)"
-        else:
-            price_change = "UNCHANGED (Normal Stock)"
-            
-        logging.info(f"--> [Pricing Engine] SKU {sku} (Stock: {stock}): Price {price_change}")
-        # In a production environment, this would trigger an update to a Pricing Database.
+print(f"🚀 OBSERVABLE WORKER STARTED")
+sqs = boto3.client('sqs', region_name=REGION, endpoint_url=ENDPOINT)
+dynamodb = boto3.client('dynamodb', region_name=REGION, endpoint_url=ENDPOINT)
 
-                if not DYNAMODB_TABLE_NAME:
-                    logging.warning("DYNAMODB_TABLE_NAME not set. Skipping persistence.")
-                    return
+def process_message(body, receipt_handle, message_attributes):
+    print(f"🧐 RAW ATTRIBUTES: {message_attributes}")
 
-                timestamp = str(int(time.time()))
+    # --- 2. EXTRACT CONTEXT (THE STAFF LOGIC) ---
+    # The Java Agent injected 'traceparent' into the SQS Message Attributes.
+    # We must extract it to link the spans.
+    ctx = None
+    if message_attributes:
+        # Convert SQS Attribute format to a simple dict for OTel
+        carrier = {}
+        for key, value in message_attributes.items():
+            if 'StringValue' in value:
+                carrier[key] = value['StringValue']
 
-                dynamodb_client.put_item(
-                    TableName=DYNAMODB_TABLE_NAME,
-                    Item={
-                        'SKU': {'S': sku},
-                        'Timestamp': {'S': timestamp},
-                        'StockLevel': {'N': str(stock)},
-                        'PriceChangeReason': {'S': price_change_reason},
-                        'MessageBody': {'S': message_body} # Audit log
-                    }
-                )
-                logging.info(f"Successfully persisted price change for SKU {sku} to DynamoDB.")
+        ctx = extract(carrier)
 
-    except json.JSONDecodeError:
-        logging.error(f"Error decoding JSON message: {message_body}")
-    except ClientError as e:
-        logging.error(f"Boto3 ClientError persisting to DynamoDB: {e.response['Error']['Code']}")
-    except Exception as e:
-        logging.error(f"Error in processing: {e}")
+    # Start the span using the extracted parent context
+    with tracer.start_as_current_span("process_order", context=ctx) as span:
+        try:
+            data = json.loads(body)
+            order_id = data.get('orderId')
 
+            span.set_attribute("app.order_id", order_id)
+            print(f"   📦 Processing Order: {order_id} [Trace Linked!]")
 
-def consume_messages(sqs_client):
-    """Polls the SQS queue continuously using long polling."""
-    if not SQS_QUEUE_URL:
-        logging.error("SQS_QUEUE_URL environment variable is not set. Cannot start consumer.")
-        return
+            # Simulate work (this will show up as a long bar in Jaeger)
+            time.sleep(1)
 
-    logging.info(f"Starting SQS consumer, polling: {SQS_QUEUE_URL}...")
+            # Update DynamoDB
+            dynamodb.update_item(
+                TableName=TABLE_NAME,
+                Key={'orderId': {'S': order_id}},
+                UpdateExpression="set #s = :status",
+                ExpressionAttributeNames={'#s': 'status'},
+                ExpressionAttributeValues={':status': {'S': 'PROCESSED'}}
+            )
+            print(f"   ✅ Updated DynamoDB")
 
+            # Delete from Queue
+            sqs.delete_message(QueueUrl=QUEUE_URL, ReceiptHandle=receipt_handle)
+
+        except Exception as e:
+            print(f"   ❌ Error: {e}")
+            span.record_exception(e)
+            span.set_status(trace.Status(trace.StatusCode.ERROR))
+
+def poll():
+    print("👀 Polling for messages...")
     while True:
         try:
-            # WaitTimeSeconds=20 enables SQS long polling, improving cost and latency
-            response = sqs_client.receive_message(
-                QueueUrl=SQS_QUEUE_URL,
-                AttributeNames=['All'],
-                MaxNumberOfMessages=10,
-                WaitTimeSeconds=20 
+            response = sqs.receive_message(
+                QueueUrl=QUEUE_URL,
+                MaxNumberOfMessages=1,
+                WaitTimeSeconds=5,
+                MessageAttributeNames=['All'] # CRITICAL: Must request attributes to get the Trace ID
             )
 
-            messages = response.get('Messages', [])
+            if 'Messages' in response:
+                for msg in response['Messages']:
+                    # Pass attributes to the processor
+                    process_message(msg['Body'], msg['ReceiptHandle'], msg.get('MessageAttributes'))
 
-            if messages:
-                for message in messages:
-                    process_message(message['Body'])
-                    
-                    # Delete the message after successful processing (at-least-once guarantee)
-                    sqs_client.delete_message(
-                        QueueUrl=SQS_QUEUE_URL,
-                        ReceiptHandle=message['ReceiptHandle']
-                    )
-                    logging.info("Message processed and deleted.")
-            
-            # Brief pause to avoid aggressive CPU usage if polling is very fast
-            time.sleep(1) 
-
-        except ClientError as e:
-            # Log AWS-specific errors (e.g., permission denied)
-            error_code = e.response.get('Error', {}).get('Code', 'Unknown')
-            logging.error(f"AWS Client Error: {error_code} - Check IRSA configuration.")
-            time.sleep(30)
+        except KeyboardInterrupt:
+            break
         except Exception as e:
-            logging.error(f"An unexpected runtime error occurred: {e}")
-            time.sleep(10)
-
+            print(f"   ⚠️ Polling Error: {e}")
+            time.sleep(2)
 
 if __name__ == '__main__':
-    # Initialize the SQS client
-    sqs_client = get_sqs_client()
-    consume_messages(sqs_client)
+    poll()
