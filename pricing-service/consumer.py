@@ -1,107 +1,115 @@
-import boto3
-import json
+import os
 import time
-import sys
+import json
 import logging
+import boto3
+from botocore.exceptions import ClientError
+from decimal import Decimal
 
-# --- OPENTELEMETRY IMPORTS ---
-from opentelemetry import trace
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-from opentelemetry.sdk.resources import Resource
-from opentelemetry.propagate import extract
-from opentelemetry.context import attach, detach
+SQS_QUEUE_URL = os.environ.get("SQS_PRICE_UPDATE_QUEUE_URL")
+REGION_NAME = os.environ.get("AWS_REGION", "us-east-1")
+DYNAMODB_TABLE_NAME = os.environ.get("DYNAMODB_TABLE_NAME")
 
-# --- CONFIGURATION ---
-REGION = 'us-east-1'
-ENDPOINT = 'http://localhost:4566'
-QUEUE_URL = 'http://localhost:4566/000000000000/order-events'
-TABLE_NAME = 'Orders'
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# --- 1. SETUP OBSERVABILITY ---
-# Define the Resource (Service Name)
-resource = Resource(attributes={
-    "service.name": "inventory-worker-python"
-})
+def get_boto_clients():
+    """Initializes Boto3 clients. Relies on IRSA for credentials."""
+    sqs_client = boto3.client('sqs', region_name=REGION_NAME)
+    dynamodb_client = boto3.client('dynamodb', region_name=REGION_NAME)
+    return sqs_client, dynamodb_client
 
-# Configure the Exporter (Send data to Jaeger on Port 4318)
-trace.set_tracer_provider(TracerProvider(resource=resource))
-tracer = trace.get_tracer(__name__)
-otlp_exporter = OTLPSpanExporter(endpoint="http://localhost:4318/v1/traces")
-trace.get_tracer_provider().add_span_processor(BatchSpanProcessor(otlp_exporter))
+def process_message(message_body, dynamodb_client):
+    """
+    Simulates dynamic pricing logic and writes the result to DynamoDB.
+    """
+    logging.info(f"Received verified inventory event.")
 
-print(f"🚀 OBSERVABLE WORKER STARTED")
-sqs = boto3.client('sqs', region_name=REGION, endpoint_url=ENDPOINT)
-dynamodb = boto3.client('dynamodb', region_name=REGION, endpoint_url=ENDPOINT)
+    try:
+        data = json.loads(message_body)
+        sku = data.get("sku")
+        stock = Decimal(data.get("stock", 0))
 
-def process_message(body, receipt_handle, message_attributes):
-    print(f"🧐 RAW ATTRIBUTES: {message_attributes}")
+        if not sku:
+            logging.warning("Message missing SKU.")
+            return
 
-    # --- 2. EXTRACT CONTEXT (THE STAFF LOGIC) ---
-    # The Java Agent injected 'traceparent' into the SQS Message Attributes.
-    # We must extract it to link the spans.
-    ctx = None
-    if message_attributes:
-        # Convert SQS Attribute format to a simple dict for OTel
-        carrier = {}
-        for key, value in message_attributes.items():
-            if 'StringValue' in value:
-                carrier[key] = value['StringValue']
+        price_change_reason = ""
+        if stock < 10:
+            price_change_reason = "INCREASED by 15% (Critical Low Stock)"
+        elif stock > 50:
+            price_change_reason = "DECREASED by 5% (High Stock/Overstock)"
+        else:
+            price_change_reason = "UNCHANGED (Normal Stock)"
 
-        ctx = extract(carrier)
+        logging.info(f"--> [Pricing Engine] SKU {sku} (Current Stock: {stock}): Price {price_change_reason}")
 
-    # Start the span using the extracted parent context
-    with tracer.start_as_current_span("process_order", context=ctx) as span:
-        try:
-            data = json.loads(body)
-            order_id = data.get('orderId')
+        if not DYNAMODB_TABLE_NAME:
+            logging.warning("DYNAMODB_TABLE_NAME not set. Skipping persistence.")
+            return
 
-            span.set_attribute("app.order_id", order_id)
-            print(f"   📦 Processing Order: {order_id} [Trace Linked!]")
+        timestamp = str(int(time.time()))
 
-            # Simulate work (this will show up as a long bar in Jaeger)
-            time.sleep(1)
+        dynamodb_client.put_item(
+            TableName=DYNAMODB_TABLE_NAME,
+            Item={
+                'SKU': {'S': sku},
+                'Timestamp': {'S': timestamp},
+                'StockLevel': {'N': str(stock)},
+                'PriceChangeReason': {'S': price_change_reason},
+                'MessageBody': {'S': message_body} # Audit log
+            }
+        )
+        logging.info(f"Successfully persisted price change for SKU {sku} to DynamoDB.")
 
-            # Update DynamoDB
-            dynamodb.update_item(
-                TableName=TABLE_NAME,
-                Key={'orderId': {'S': order_id}},
-                UpdateExpression="set #s = :status",
-                ExpressionAttributeNames={'#s': 'status'},
-                ExpressionAttributeValues={':status': {'S': 'PROCESSED'}}
-            )
-            print(f"   ✅ Updated DynamoDB")
+    except json.JSONDecodeError:
+        logging.error(f"Error decoding JSON message: {message_body}")
+    except ClientError as e:
+        logging.error(f"Boto3 ClientError persisting to DynamoDB: {e.response['Error']['Code']}")
+    except Exception as e:
+        logging.error(f"Error in processing: {e}")
 
-            # Delete from Queue
-            sqs.delete_message(QueueUrl=QUEUE_URL, ReceiptHandle=receipt_handle)
 
-        except Exception as e:
-            print(f"   ❌ Error: {e}")
-            span.record_exception(e)
-            span.set_status(trace.Status(trace.StatusCode.ERROR))
+def consume_messages(sqs_client, dynamodb_client):
+    """Polls the SQS queue continuously using long polling."""
+    if not SQS_QUEUE_URL:
+        logging.error("SQS_PRICE_UPDATE_QUEUE_URL environment variable is not set. Cannot start consumer.")
+        return
 
-def poll():
-    print("👀 Polling for messages...")
+    logging.info(f"Starting SQS consumer, polling: {SQS_QUEUE_URL}...")
+
     while True:
         try:
-            response = sqs.receive_message(
-                QueueUrl=QUEUE_URL,
-                MaxNumberOfMessages=1,
-                WaitTimeSeconds=5,
-                MessageAttributeNames=['All'] # CRITICAL: Must request attributes to get the Trace ID
+            response = sqs_client.receive_message(
+                QueueUrl=SQS_QUEUE_URL,
+                AttributeNames=['All'],
+                MaxNumberOfMessages=10,
+                WaitTimeSeconds=20
             )
 
-            if 'Messages' in response:
-                for msg in response['Messages']:
-                    # Pass attributes to the processor
-                    process_message(msg['Body'], msg['ReceiptHandle'], msg.get('MessageAttributes'))
+            messages = response.get('Messages', [])
 
-        except KeyboardInterrupt:
-            break
+            if messages:
+                for message in messages:
+                    # Pass DynamoDB client to processing function
+                    process_message(message['Body'], dynamodb_client)
+
+                    sqs_client.delete_message(
+                        QueueUrl=SQS_QUEUE_URL,
+                        ReceiptHandle=message['ReceiptHandle']
+                    )
+                    logging.info("Message processed and deleted from SQS.")
+
+            time.sleep(1)
+
+        except ClientError as e:
+            error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+            logging.error(f"AWS Client Error (SQS): {error_code} - Check IRSA configuration.")
+            time.sleep(30)
         except Exception as e:
-            print(f"   ⚠️ Polling Error: {e}")
-            time.sleep(2)
+            logging.error(f"An unexpected runtime error occurred: {e}")
+            time.sleep(10)
+
 
 if __name__ == '__main__':
-    poll()
+    sqs_client, dynamodb_client = get_boto_clients()
+    consume_messages(sqs_client, dynamodb_client)

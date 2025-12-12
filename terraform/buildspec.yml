@@ -43,7 +43,6 @@ phases:
     commands:
       - echo Security scans passed. Build completed successfully on `date`
 
-      # --- Push Java Images ---
       - echo Pushing the Java Inventory Service Docker image...
       - docker push $JAVA_REPO_URI:$IMAGE_TAG
       - docker push $JAVA_REPO_URI:$CODEBUILD_RESOLVED_SOURCE_VERSION

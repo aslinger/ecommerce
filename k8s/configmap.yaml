@@ -6,4 +6,5 @@ metadata:
 data:
   SQS_QUEUE_URL: "https://sqs.us-west-2.amazonaws.com/497588665354/inventory-update-queue"
   DYNAMODB_TABLE_NAME: "PriceHistory"
+  DYNAMODB_INVENTORY_TABLE_NAME: "InventoryState"
   AWS_REGION: "us-west-2"
