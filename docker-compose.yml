@@ -1,22 +1,76 @@
 version: '3.8'
 
 services:
-  # 1. LocalStack (Existing)
   localstack:
-    container_name: localstack_main
+    container_name: localstack
     image: localstack/localstack:3.0
     ports:
       - "4566:4566"
     environment:
       - SERVICES=sqs,dynamodb
-      - AWS_DEFAULT_REGION=us-east-1
+      - AWS_DEFAULT_REGION=us-west-2
       - DEBUG=1
       - PERSISTENCE=0
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:4566/_localstack/health" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-net
     volumes:
       - "/var/run/docker.sock:/var/run/docker.sock"
-      - "./infra/localstack-init.sh:/etc/localstack/init/ready.d/init.sh"
+      - "./infra/localstack-settings.sh:/etc/localstack/init/ready.d/init.sh"
 
-  # 2. Jaeger (NEW - The Observability Backend)
+  inventory-service:
+    build:
+      context: ./java-inventory-service
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - HOSTNAME_EXTERNAL=localstack
+      - SQS_ORDER_QUEUE_URL=http://localstack:4566/000000000000/order-processing-queue
+      - SQS_PRICE_UPDATE_QUEUE_URL=http://localstack:4566/000000000000/inventory-update-queue
+      - DYNAMODB_INVENTORY_TABLE_NAME=InventoryState
+      - AWS_REGION=us-west-2
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      - AWS_ENDPOINT_OVERRIDE=http://localstack:4566
+      - JAVA_TOOL_OPTIONS=-Djava.net.preferIPv4Stack=true
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
+      - OTEL_SERVICE_NAME=inventory-service
+    links:
+      - localstack
+    depends_on:
+      localstack:
+        condition: service_healthy
+    networks:
+      - app-net
+
+  pricing-service:
+    build:
+      context: ./pricing-service
+      dockerfile: Dockerfile
+    environment:
+      # LOCAL TRICK: We point 'SQS_EXISTING_STREAM_URL' to the Inventory Output queue
+      # This effectively wires the services together for local testing.
+      - SQS_EXISTING_STREAM_URL=http://localstack:4566/000000000000/inventory-update-queue
+      - DYNAMODB_TABLE_NAME=PriceHistory
+      - AWS_REGION=us-west-2
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
+      - OTEL_SERVICE_NAME=pricing-service
+    depends_on:
+      localstack:
+        condition: service_healthy
+    networks:
+      - app-net
+
+
   jaeger:
     container_name: jaeger
     image: jaegertracing/all-in-one:latest
@@ -26,3 +80,6 @@ services:
       - "4318:4318"   # OTLP HTTP Receiver
     environment:
       - COLLECTOR_OTLP_ENABLED=true
+networks:
+  app-net:
+    driver: bridge

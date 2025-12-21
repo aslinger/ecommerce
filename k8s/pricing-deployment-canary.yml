@@ -19,7 +19,6 @@ spec:
       serviceAccountName: pricing-service-sa
       containers:
         - name: pricing-consumer-canary
-          # This image name matches the key in imagedefinitions.json
           image: 497588665354.dkr.ecr.us-east-1.amazonaws.com/ecomm/pricing-service:latest
           envFrom:
             - configMapRef:
