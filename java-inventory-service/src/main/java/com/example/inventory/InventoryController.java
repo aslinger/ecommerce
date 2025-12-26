@@ -12,7 +12,6 @@ import software.amazon.awssdk.services.dynamodb.model.*;
 import software.amazon.awssdk.services.sqs.SqsClient;
 import software.amazon.awssdk.services.sqs.model.*;
 
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -83,7 +82,6 @@ public class InventoryController implements CommandLineRunner {
         try {
             JsonNode json = objectMapper.readTree(message.body());
             String sku = json.has("sku") ? json.get("sku").asText() : "UNKNOWN";
-            // Default order quantity is 1 if not specified
             int quantity = json.has("quantity") ? json.get("quantity").asInt() : 1;
 
             logger.info("Processing Order for SKU: {}", sku);
@@ -102,7 +100,6 @@ public class InventoryController implements CommandLineRunner {
                 logger.info("Stock updated. Event published for SKU: {}", sku);
             } else {
                 logger.warn("Insufficient stock for SKU: {}", sku);
-                // In a real app, we would publish to an 'order-failed-queue' here
             }
 
         } catch (Exception e) {
@@ -110,26 +107,21 @@ public class InventoryController implements CommandLineRunner {
         }
     }
 
-    /**
-     * Atomically decrements stock in DynamoDB.
-     * Returns new stock level, or -1 if transaction failed (insufficient stock/SKU not found).
-     */
     private int updateStockInDB(String sku, int quantity) {
         try {
-            // Using UpdateItem with ConditionExpression to ensure we don't go below zero
             Map<String, AttributeValue> key = new HashMap<>();
             key.put("SKU", AttributeValue.builder().s(sku).build());
 
             Map<String, AttributeValue> expressionValues = new HashMap<>();
             expressionValues.put(":dec", AttributeValue.builder().n(String.valueOf(quantity)).build());
 
-            // Note: This assumes the item already exists.
-            // In a real startup, you'd need a Seeder or conditional PutItem if missing.
             UpdateItemRequest request = UpdateItemRequest.builder()
                     .tableName(inventoryTableName)
                     .key(key)
                     .updateExpression("SET Stock = Stock - :dec")
-                    .conditionExpression("Stock >= :dec") // Optimistic locking / Constraint
+                    .conditionExpression("Stock >= :dec")
+                    // FIX: This line was missing, causing the "value not defined" error
+                    .expressionAttributeValues(expressionValues)
                     .returnValues(ReturnValue.UPDATED_NEW)
                     .build();
 

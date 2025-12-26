@@ -5,6 +5,7 @@ import io.opentelemetry.context.Context;
 import io.opentelemetry.context.propagation.TextMapSetter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.ResponseEntity;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -33,10 +34,10 @@ public class OrderController {
     private final DynamoDbClient dynamoDbClient;
     private final SqsClient sqsClient;
 
-    @Value("${aws.table-name}")
+    @Value("${dynamodb.inventory.table.name}")
     private String tableName;
 
-    @Value("${aws.queue-url}")
+    @Value("${sqs.order.queue.url}")
     private String queueUrl;
 
     public OrderController(DynamoDbClient dynamoDbClient, SqsClient sqsClient) {
@@ -44,12 +45,37 @@ public class OrderController {
         this.sqsClient = sqsClient;
     }
 
+    @PostMapping("/inventory-update")
+    public ResponseEntity<String> createOrder(@RequestBody Map<String, Object> orderData) {
+        String sku = (String) orderData.get("sku");
+        Object qtyObj = orderData.get("quantity");
+        int quantity = (qtyObj instanceof Integer) ? (Integer) qtyObj : 1;
+
+        log.info("Received API Order Request: {} x {}", quantity, sku);
+
+        try {
+            String messageBody = String.format("{\"sku\": \"%s\", \"quantity\": %d}", sku, quantity);
+
+            sqsClient.sendMessage(SendMessageRequest.builder()
+                    .queueUrl(queueUrl)
+                    .messageBody(messageBody)
+                    .build());
+
+            log.info("Order successfully queued.");
+            return ResponseEntity.accepted().body("Order queued for processing.");
+
+        } catch (Exception e) {
+            // FIXED: Using 'log'
+            log.error("Failed to queue order", e);
+            return ResponseEntity.internalServerError().body("Failed to process order ingestion.");
+        }
+    }
+
     @PostMapping("/orders")
     public String createOrder(@RequestBody OrderRequest request) {
         String orderId = UUID.randomUUID().toString();
         log.info("Processing order: {}", orderId);
 
-        // 1. Save to DynamoDB
         Map<String, AttributeValue> item = Map.of(
                 "orderId", AttributeValue.builder().s(orderId).build(),
                 "item", AttributeValue.builder().s(request.getItem()).build(),
@@ -62,28 +88,24 @@ public class OrderController {
                 .item(item)
                 .build());
 
-        // 2. PREPARE SQS ATTRIBUTES (Context Injection)
         Map<String, MessageAttributeValue> messageAttributes = new HashMap<>();
 
-        // This injector puts "traceparent" into the map
         GlobalOpenTelemetry.getPropagators().getTextMapPropagator().inject(
                 Context.current(),
                 messageAttributes,
                 setter
         );
 
-        // 3. Publish to SQS
         sqsClient.sendMessage(SendMessageRequest.builder()
                 .queueUrl(queueUrl)
                 .messageBody("{\"orderId\": \"" + orderId + "\", \"action\": \"PROCESS\"}")
-                .messageAttributes(messageAttributes) // <--- Attach the trace here
+                .messageAttributes(messageAttributes)
                 .build());
 
         log.info("Published to SQS with Trace Context");
         return orderId;
     }
 
-    // Setter tells OTEL how to put data into the AWS SDK Map
     private static final TextMapSetter<Map<String, MessageAttributeValue>> setter =
             (carrier, key, value) -> carrier.put(key, MessageAttributeValue.builder()
                     .dataType("String")
@@ -102,9 +124,10 @@ public class OrderController {
 
 @Configuration
 class AwsConfig {
-    @Value("${aws.endpoint}")
+    @Value("${AWS_ENDPOINT_URL:}")
     private String endpoint;
-    @Value("${aws.region}")
+
+    @Value("${AWS_REGION:us-west-2}")
     private String region;
 
     @Bean

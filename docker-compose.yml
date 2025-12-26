@@ -20,7 +20,7 @@ services:
       - app-net
     volumes:
       - "/var/run/docker.sock:/var/run/docker.sock"
-      - "./infra/localstack-settings.sh:/etc/localstack/init/ready.d/init.sh"
+      - "./infra/localstack-init.sh:/etc/localstack/init/ready.d/init.sh"
 
   inventory-service:
     build:
@@ -80,6 +80,18 @@ services:
       - "4318:4318"   # OTLP HTTP Receiver
     environment:
       - COLLECTOR_OTLP_ENABLED=true
+
+  frontend:
+    container_name: frontend
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:80"
+    depends_on:
+      - inventory-service
+    networks:
+      - app-net
 networks:
   app-net:
     driver: bridge

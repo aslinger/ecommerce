@@ -16,7 +16,6 @@ spec:
     spec:
       containers:
       - name: inventory-app
-        # This image URL will be dynamically updated by the CI/CD pipeline (Day 5)
         image: 497588665354.dkr.ecr.us-east-1.amazonaws.com/ecomm/java-inventory-service:latest
         ports:
         - containerPort: 8080
